@@ -95,7 +95,7 @@ class League:
         """Share of a player's projection to count for a week.
 
         A recorded return week wins. Otherwise the injury tag only applies
-        through next week; beyond that the projection feed already zeroes
+        through the next unplayed week; beyond that the projection feed zeroes
         multi-week IR stints, so applying today's tag would double-count.
         """
         week = self.week if week is None else week

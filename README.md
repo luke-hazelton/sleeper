@@ -67,8 +67,10 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
   1. A **recorded return week** (`data/injury_returns.json`, edited with `injuries.py`)
      wins: 0 points before it, full projection from it on.
   2. Otherwise the **injury tag** (Out/IR/PUP → 0x, Doubtful → 0.25x, Questionable → 0.85x)
-     applies only to the current and next week. The tag describes the latest report,
-     not the rest of the season.
+     applies only through the next week with no games played yet (plus the week in
+     progress, if any). On a live Sunday that's this week and next; once Sleeper rolls
+     over, it's just the upcoming week. The tag describes the latest report, not the
+     rest of the season.
   3. Later weeks use the **projection feed as-is**. The feed already zeroes players on
      multi-week IR (Jordyn Tyson projects 0 through week 5), but it does *not* know
      about fresh short-term injuries — that's what recorded return weeks are for.

@@ -12,8 +12,9 @@ Usage:
 
 How a player's weekly projection is counted:
   1. A return week recorded here wins: 0 before it, full projection from it on.
-  2. Otherwise the injury tag (Out/Doubtful/Questionable) only discounts the
-     current and next week — it describes the latest report, not the season.
+  2. Otherwise the injury tag (Out/Doubtful/Questionable) only discounts weeks
+     up to the next one with no games played (plus any week in progress) — it
+     describes the latest report, not the season.
   3. Later weeks use the projection feed as-is, which already zeroes players
      on multi-week IR (e.g. a rookie on IR-designated-to-return).
 """
