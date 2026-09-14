@@ -49,12 +49,19 @@ def team_profile(lg, roster, value, core):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--weeks", type=int,
-                    help="number of upcoming weeks to average (default: rest of season)")
+def build_parser():
+    # allow_abbrev=False: otherwise "--week 2" silently becomes "--weeks 2"
+    ap = argparse.ArgumentParser(allow_abbrev=False)
+    span = ap.add_mutually_exclusive_group()
+    span.add_argument("--week", type=int, help="value a single week")
+    span.add_argument("--weeks", type=int,
+                      help="number of upcoming weeks to average (default: rest of season)")
     ap.add_argument("--end", type=int, default=17)
-    args = ap.parse_args()
+    return ap
+
+
+def main():
+    args = build_parser().parse_args()
     cfg = sleeper.load_config()
     if not cfg.get("league_id"):
         sys.exit("No league configured. Run:  ff.py setup <your_sleeper_username>")
@@ -63,8 +70,11 @@ def main():
     if not me:
         sys.exit("You don't have a roster in this league.")
 
-    start = sleeper.first_open_week(lg.season)
-    end = min(args.end, start + args.weeks - 1) if args.weeks else args.end
+    if args.week:
+        start = end = args.week
+    else:
+        start = sleeper.first_open_week(lg.season)
+        end = min(args.end, start + args.weeks - 1) if args.weeks else args.end
     ros = ROS(lg, start, end, lg.info["settings"].get("playoff_week_start", 15))
     n_weeks = max(len(ros.weeks), 1)
     cache = {}

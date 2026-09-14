@@ -177,6 +177,15 @@ class NeedsTests(unittest.TestCase):
         self.assertEqual(prof["RB"][2][0], "ok")
         self.assertEqual(prof["RB"][0], 8.0)
 
+    def test_week_is_its_own_option(self):
+        ap = needs.build_parser()
+        args = ap.parse_args(["--week", "2"])
+        self.assertEqual((args.week, args.weeks), (2, None))
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            ap.parse_args(["--wee", "2"])  # no silent prefix matching
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            ap.parse_args(["--week", "2", "--weeks", "3"])
+
 
 if __name__ == "__main__":
     unittest.main()

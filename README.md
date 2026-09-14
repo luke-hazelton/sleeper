@@ -26,6 +26,7 @@ python3 scripts/ff.py waivers --pos RB    # ...filtered to a position
 python3 scripts/ff.py league              # power rankings
 python3 scripts/needs.py                  # positional strength (rest of season) + trade partners
 python3 scripts/needs.py --weeks 1        # ...same, for just the next week
+python3 scripts/needs.py --week 5         # ...same, for week 5 only
 python3 scripts/ff.py trade --give "Geno Smith,Travis Kelce" --get "Travis Etienne"
 
 # rest-of-season (the one that matters for trades)
