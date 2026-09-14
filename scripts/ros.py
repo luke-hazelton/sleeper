@@ -33,8 +33,9 @@ class ROS:
         self.weeks = load_weeks(lg.season, start, end)
 
     def pts(self, pid, wk):
-        pr = self.weeks.get(wk, {}).get(pid)
-        return sleeper.proj_points(pr, self.lg.score_key)
+        proj = self.weeks.get(wk, {})
+        return (sleeper.proj_points(proj.get(pid), self.lg.score_key)
+                * self.lg.availability(pid, wk, proj))
 
     def total(self, pid, lo=None, hi=None):
         lo = lo or self.start
@@ -72,25 +73,31 @@ def main():
     ap.add_argument("--pos", help="rest-of-season ranks at a position")
     ap.add_argument("-n", "--num", type=int, default=20)
     ap.add_argument("--end", type=int, default=17)
+    ap.add_argument("--start", type=int,
+                    help="first week to count (default: first week with no games played)")
     args = ap.parse_args()
 
     cfg = sleeper.load_config()
+    if not cfg.get("league_id"):
+        sys.exit("No league configured. Run:  ff.py setup <your_sleeper_username>")
     lg = League(cfg["league_id"])
-    cw, _ = sleeper.current_week()
-    start = cw + 1  # current week is in progress; plan from next
+    me = lg.roster_for_user(cfg["user_id"])
+    if not me:
+        sys.exit("You don't have a roster in this league.")
+    start = args.start or sleeper.first_open_week(lg.season)
     po_start = lg.info["settings"].get("playoff_week_start", 15)
 
     print(f"\nREST OF SEASON — weeks {start}-{args.end} "
           f"(playoffs {po_start}-{args.end}) — {cfg['league_name']}")
     ros = ROS(lg, start, args.end, po_start)
 
-    def resolve(names):
+    def resolve(names, pool=None):
         out = []
         for n in names.split(","):
-            hits = sleeper.find_player(n.strip())
-            if not hits:
-                sys.exit(f"no player matching '{n}'")
-            out.append(hits[0][0])
+            try:
+                out.append(sleeper.resolve_player(n, pool))
+            except ValueError as e:
+                sys.exit(str(e))
         return out
 
     if args.pos:
@@ -114,7 +121,11 @@ def main():
     if not (args.give and args.get):
         sys.exit("pass --give/--get, --players, or --pos")
 
-    give, get = resolve(args.give), resolve(args.get)
+    mine_ids = set(me.get("players") or [])
+    give, get = resolve(args.give, mine_ids), resolve(args.get, lg.rostered_ids())
+    not_mine = [lg.name(p) for p in give if p not in mine_ids]
+    if not_mine:
+        sys.exit(f"Not on your roster: {', '.join(not_mine)}")
     print(f"\n{ros.header()}")
     print("  -- YOU GIVE --")
     for pid in give:
@@ -135,7 +146,7 @@ def main():
     after = [p for p in mine if p not in give] + get
     tb = ta = tbp = tap = 0.0
     for wk in ros.weeks:
-        lg.proj = ros.weeks[wk]
+        lg.set_week(wk, ros.weeks[wk])
         b, a = lg.starter_value(mine), lg.starter_value(after)
         tb += b; ta += a
         if wk >= po_start:
@@ -146,6 +157,15 @@ def main():
     print(f"    before {tbp:8.1f}   after {tap:8.1f}   ({tap - tbp:+.1f})")
     print("\n  (lineup impact counts only what you'd actually start each week;")
     print("   raw points above include production you'd leave on the bench)")
+
+    hurt = [p for p in dict.fromkeys(mine + get) if lg.injury(p) or p in lg.returns]
+    if hurt:
+        print("\n  Injury assumptions (record a return week with injuries.py --set):")
+        for pid in hurt:
+            back = next((w for w in ros.weeks if ros.pts(pid, w) > 0), None)
+            how = "recorded return" if pid in lg.returns else "tag + projection feed"
+            when = f"counted from week {back}" if back else "not counted this season"
+            print(f"    {lg.name(pid):<22}{(lg.injury(pid) or '-'):<8}{when}  ({how})")
 
 
 if __name__ == "__main__":

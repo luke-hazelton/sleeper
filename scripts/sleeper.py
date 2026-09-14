@@ -3,6 +3,7 @@
 Sleeper's API is unauthenticated and rate-limited to ~1000 calls/min.
 We cache aggressively: the player DB daily, projections/stats per-week.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -95,6 +96,16 @@ def current_week():
     return int(s.get("display_week") or s.get("week") or 1), s["season"]
 
 
+def first_open_week(season=None, today=None):
+    """First week with no games played yet: the earliest week a roster move made
+    today can affect in full. Mid-slate that's next week; after Sleeper rolls
+    over to a new week, it's that week."""
+    cw, s = current_week()
+    today = today or datetime.date.today().isoformat()
+    dates = [r["date"] for r in projections(season or s, cw).values() if r.get("date")]
+    return cw if dates and min(dates) >= today else cw + 1
+
+
 # ---------- players ----------
 
 _players_cache = None
@@ -152,6 +163,29 @@ def find_player(name):
     return [(pid, p) for _, pid, p in hits]
 
 
+def resolve_player(name, pool=None):
+    """Resolve a name to exactly one player_id, or raise ValueError.
+
+    Exact full-name matches beat partial ones. Among several, prefer players in
+    `pool` (e.g. rostered ids), then players on an NFL team. If it's still
+    ambiguous, the error lists the candidates instead of guessing.
+    """
+    n = name.lower().strip()
+    hits = find_player(n)
+    if not hits:
+        raise ValueError(f"No player matching '{name.strip()}'")
+    cands = [h for h in hits if (h[1].get("full_name") or "").lower() == n] or hits
+    for keep in (lambda h: pool is not None and h[0] in pool,
+                 lambda h: bool(h[1].get("team"))):
+        if len(cands) > 1:
+            cands = [h for h in cands if keep(h)] or cands
+    if len(cands) > 1:
+        opts = "; ".join(f"{p.get('full_name')} ({p.get('position')}, {p.get('team') or 'FA'})"
+                         for _, p in cands[:6])
+        raise ValueError(f"'{name.strip()}' matches several players: {opts}. Be more specific.")
+    return cands[0][0]
+
+
 # ---------- league ----------
 
 def user(username):
@@ -204,6 +238,7 @@ def projections(season, week):
             "team": row.get("team"),
             "injury_status": (row.get("player") or {}).get("injury_status"),
             "game_id": row.get("game_id"),
+            "date": row.get("date"),
         }
     return out
 
@@ -211,6 +246,23 @@ def projections(season, week):
 def weekly_stats(season, week):
     """Actual stats for a completed week, keyed by player_id."""
     return get(f"{BASE}/stats/nfl/regular/{season}/{week}", f"stats_{season}_{week}", TTL_PROJ)
+
+
+def schedule(season, season_type="regular"):
+    """Every game of the season with live status (pre_game / in_game / complete).
+    Undocumented endpoint; it has game dates but no kickoff times or clock."""
+    return get(f"{PROJ_BASE}/schedule/nfl/{season_type}/{season}",
+               f"schedule_{season}_{season_type}", TTL_LIVE)
+
+
+def game_status(season, week):
+    """{team: game status} for one week. Teams on bye are absent."""
+    out = {}
+    for g in schedule(season):
+        if g.get("week") == week:
+            for team in (g.get("home"), g.get("away")):
+                out[team] = g.get("status")
+    return out
 
 
 def trending(kind="add", hours=24, limit=50):

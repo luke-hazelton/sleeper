@@ -1,5 +1,21 @@
 """Analysis layer: roster valuation, lineup optimization, waiver & trade logic."""
+import json
+import os
+
 import sleeper
+
+# Curated expected-return weeks, keyed by player_id (edit with scripts/injuries.py)
+RETURNS_FILE = os.path.join(sleeper.DATA, "injury_returns.json")
+SEASON_OVER = 99  # return_week meaning "not back this season"
+
+
+def load_returns(season=None):
+    """Return-week overrides keyed by player_id; other seasons' entries ignored."""
+    if not os.path.exists(RETURNS_FILE):
+        return {}
+    with open(RETURNS_FILE) as f:
+        data = json.load(f)
+    return {pid: r for pid, r in data.items() if season is None or r.get("season") == season}
 
 # Flex eligibility by roster slot
 FLEX_OK = {
@@ -36,12 +52,22 @@ class League:
         self.season = self.info["season"]
         cw, _ = sleeper.current_week()
         self.week = week or cw
+        # Injury tags describe the latest report, so they only apply through the
+        # next week that hasn't started (covering an in-progress week too)
+        self.status_horizon = sleeper.first_open_week(self.season)
+        self.returns = load_returns(self.season)
         self.players = sleeper.players()
         self.score_key = sleeper.score_key(self.info)
         self.proj = sleeper.projections(self.season, self.week)
         self.rosters = sleeper.rosters(league_id)
         self.users = {u["user_id"]: u for u in sleeper.league_users(league_id)}
         self.roster_positions = self.info["roster_positions"]
+        self._games = None  # this week's game statuses, loaded on first use
+
+    def set_week(self, week, proj):
+        """Point valuation at another week's projections (used by ROS loops)."""
+        self.week, self.proj = week, proj
+        self._games = None
 
     # ---------- helpers ----------
 
@@ -57,13 +83,39 @@ class League:
         p = self.players.get(pid)
         return (p.get("team") if p else None) or "FA"
 
-    def injury(self, pid):
+    def injury(self, pid, proj=None):
         """Prefer the projection feed's status (fresher), fall back to player DB."""
-        pr = self.proj.get(pid)
+        pr = (self.proj if proj is None else proj).get(pid)
         if pr and pr.get("injury_status"):
             return pr["injury_status"]
         p = self.players.get(pid)
         return (p or {}).get("injury_status")
+
+    def availability(self, pid, week=None, proj=None):
+        """Share of a player's projection to count for a week.
+
+        A recorded return week wins. Otherwise the injury tag only applies
+        through next week; beyond that the projection feed already zeroes
+        multi-week IR stints, so applying today's tag would double-count.
+        """
+        week = self.week if week is None else week
+        ret = self.returns.get(pid)
+        if ret:
+            return 0.0 if week < ret["return_week"] else 1.0
+        if week > self.status_horizon:
+            return 1.0
+        return injury_multiplier(self.injury(pid, proj))
+
+    def game(self, pid):
+        """This week's status of a player's game: pre_game, in_game, complete,
+        or None when his team is on bye (or unknown)."""
+        if self._games is None:
+            self._games = sleeper.game_status(self.season, self.week)
+        return self._games.get(self.team_of(pid))
+
+    def locked(self, pid):
+        """Sleeper locks a player once his game kicks off."""
+        return self.game(pid) not in (None, "pre_game")
 
     def opponent(self, pid):
         pr = self.proj.get(pid)
@@ -73,7 +125,7 @@ class League:
         """Projected points, optionally discounted for injury risk."""
         raw = sleeper.proj_points(self.proj.get(pid), self.score_key)
         if adjust:
-            raw *= injury_multiplier(self.injury(pid))
+            raw *= self.availability(pid)
         return raw
 
     def owner_name(self, roster):
@@ -100,11 +152,13 @@ class League:
 
     # ---------- lineup optimizer ----------
 
-    def optimal_lineup(self, player_ids):
+    def optimal_lineup(self, player_ids, fixed=None):
         """Greedy best-first fill of starting slots. Returns (slots, total, bench).
 
         Fills the most constrained slots first (dedicated positions before
         flex) so a flex-eligible stud isn't burned on a slot only he can fill.
+        `fixed` maps starter-slot index -> player_id for slots that can't
+        change (e.g. players whose games have kicked off).
         """
         avail = {pid: self.points(pid) for pid in player_ids
                  if self.players.get(pid)}
@@ -116,9 +170,12 @@ class League:
             return (0, 1)
         order = sorted(range(len(starters)), key=lambda i: slot_rank(starters[i]))
 
-        used = set()
-        assigned = {}
+        fixed = fixed or {}
+        used = set(fixed.values())
+        assigned = {i: (starters[i], pid, self.points(pid)) for i, pid in fixed.items()}
         for i in order:
+            if i in assigned:
+                continue
             slot = starters[i]
             elig = FLEX_OK.get(slot, {slot})
             best, best_pts = None, -1.0

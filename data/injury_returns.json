@@ -1,0 +1,18 @@
+{
+  "5849": {
+    "name": "Kyler Murray",
+    "note": "concussion Wk1; HC day-to-day, median return ~9 days",
+    "return_week": 3,
+    "season": "2026",
+    "source": "https://www.nfl.com/news/vikings-qb-kyler-murray-evaluated-concussion-packers",
+    "updated": "2026-09-13"
+  },
+  "8800": {
+    "name": "Malik Davis",
+    "note": "hip surgery",
+    "return_week": 99,
+    "season": "2026",
+    "source": "https://www.cbssports.com/fantasy/football/news/cowboys-malik-davis-done-for-2026-after-hip-surgery/",
+    "updated": "2026-09-13"
+  }
+}

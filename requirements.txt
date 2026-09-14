@@ -1,0 +1,5 @@
+# The toolkit runs on the Python 3 standard library; nothing here is required.
+#
+# Optional: certifi fixes SSL certificate errors on python.org macOS builds.
+# Without it, API calls fall back to curl.
+certifi

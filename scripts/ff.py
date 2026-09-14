@@ -35,7 +35,7 @@ def _cfg_or_die():
 
 
 def _line(lg, pid, slot=None):
-    nm = lg.name(pid) + _inj_tag(lg.injury(pid))
+    nm = lg.name(pid) + _inj_tag(lg.injury(pid)) + (" [LOCKED]" if lg.locked(pid) else "")
     opp = lg.opponent(pid) or ("BYE" if lg.proj.get(pid) else "n/a")
     pts = lg.points(pid)
     raw = lg.points(pid, adjust=False)
@@ -98,15 +98,29 @@ def cmd_roster(args):
     print("  * = projection discounted for injury risk")
 
 
+def _unlocked_lineup(lg, r):
+    """Best lineup you can still set: starters whose games kicked off stay in
+    their slots, and bench players whose games started can't come in.
+    Returns (slots, total, bench, current_starters, locked_slots)."""
+    n_slots = len([s for s in lg.roster_positions if s not in BENCH_SLOTS])
+    cur_slots = list(r.get("starters") or [])[:n_slots]
+    current = [p for p in cur_slots if p and p != "0"]
+    fixed = {i: p for i, p in enumerate(cur_slots) if p and p != "0" and lg.locked(p)}
+    locked_in = set(fixed.values())
+    pool = [p for p in (r.get("players") or []) if not lg.locked(p) or p in locked_in]
+    slots, total, bench = lg.optimal_lineup(pool, fixed)
+    return slots, total, bench, current, fixed
+
+
 def cmd_lineup(args):
     cfg = _cfg_or_die()
     lg = League(cfg["league_id"], args.week)
     r = _my_roster(lg, cfg)
-    ids = r.get("players") or []
-    current = [p for p in (r.get("starters") or []) if p and p != "0"]
-    slots, total, bench = lg.optimal_lineup(ids)
+    slots, total, bench, current, fixed = _unlocked_lineup(lg, r)
 
     print(f"\nOPTIMAL LINEUP — Week {lg.week} — {cfg['league_name']}\n")
+    if fixed:
+        print(f"  ({len(fixed)} starter(s) locked because their games started; kept in place)\n")
     for slot, pid, pts in slots:
         print(_line(lg, pid, slot) if pid else f"  {slot:<11}(empty)")
     print(f"\n  {'PROJECTED TOTAL':<38}{total:6.1f}")
@@ -140,6 +154,19 @@ def cmd_lineup(args):
             print(_line(lg, pid))
 
 
+def _estimate(lg, pid, live):
+    """(points so far, points still expected) for one starter. Finished games
+    count actual points, unstarted games their projection, and in-progress
+    games half of the projection not yet reached — the feed has no game clock."""
+    actual = live.get(pid) or 0.0
+    status = lg.game(pid)
+    if status == "complete":
+        return actual, 0.0
+    if status in (None, "pre_game"):
+        return actual, lg.points(pid)
+    return actual, max(0.0, lg.points(pid) - actual) * 0.5
+
+
 def cmd_matchup(args):
     cfg = _cfg_or_die()
     lg = League(cfg["league_id"], args.week)
@@ -154,23 +181,42 @@ def cmd_matchup(args):
 
     def side(m):
         rr = rmap[m["roster_id"]]
-        best = lg.starter_value(rr.get("players") or [])
-        cur = sum(lg.points(p) for p in (m.get("starters") or []) if p and p != "0")
-        return lg.owner_name(rr), cur, best
+        live = m.get("players_points") or {}
+        scored = left = 0.0
+        to_play = []
+        for p in m.get("starters") or []:
+            if not p or p == "0":
+                continue
+            a, rest = _estimate(lg, p, live)
+            scored += a
+            left += rest
+            if lg.game(p) not in (None, "complete"):
+                to_play.append(p)
+        return lg.owner_name(rr), scored, left, to_play
 
-    n1, c1, b1 = side(mine)
+    sides = [side(mine)] + ([side(opp)] if opp else [])
     print(f"\nWEEK {lg.week} MATCHUP — {cfg['league_name']}\n")
-    print(f"  {n1:<24} {c1:6.1f}  (optimal {b1:.1f})")
-    if opp:
-        n2, c2, b2 = side(opp)
-        print(f"  {n2:<24} {c2:6.1f}  (optimal {b2:.1f})")
-        d = c1 - c2
-        verb = "favored by" if d >= 0 else "underdog by"
-        print(f"\n  You are {verb} {abs(d):.1f} projected points.")
-        if d < 0 and b1 > c2:
-            print(f"  Optimizing your lineup flips this (+{b1 - c1:.1f} available).")
-    else:
+    print(f"  {'TEAM':<24}{'SCORED':>8}{'LEFT (est)':>12}{'FINAL (est)':>13}")
+    for nm, scored, left, _ in sides:
+        print(f"  {nm:<24}{scored:8.1f}{left:12.1f}{scored + left:13.1f}")
+    if not opp:
         print("  (bye week / no opponent)")
+        return
+
+    d = sum(sides[0][1:3]) - sum(sides[1][1:3])
+    verb = "favored by" if d >= 0 else "underdog by"
+    print(f"\n  You are {verb} {abs(d):.1f} estimated points.")
+    for label, (_, _, _, to_play) in zip(("you", "them"), sides):
+        if to_play:
+            names = ", ".join(
+                f"{lg.name(p)} ({lg.points(p):.1f}{', live' if lg.game(p) != 'pre_game' else ''})"
+                for p in to_play)
+            print(f"  Still to play — {label}: {names}")
+
+    _, total, _, current, _ = _unlocked_lineup(lg, r)
+    gain = total - sum(lg.points(p) for p in current)
+    if gain > 0.05:
+        print(f"  Changing your unlocked slots adds +{gain:.1f} projected (see ff.py lineup).")
 
 
 def cmd_waivers(args):
@@ -208,7 +254,8 @@ def cmd_waivers(args):
         print(f"  {nm:<{W}} {lg.pos(pid):<3} {lg.team_of(pid):<3} vs {opp:<4} "
               f"{pts:5.1f} {g:>6}  {a}")
 
-    hot = [(c, p) for p, c in trend.items() if p in set(fas)]
+    fa_set = set(fas)
+    hot = [(c, p) for p, c in trend.items() if p in fa_set]
     hot.sort(reverse=True)
     if hot:
         print("\n  TRENDING & AVAILABLE (league-wide adds, last 24h)")
@@ -217,14 +264,13 @@ def cmd_waivers(args):
                   f"{c:>8,} adds   proj {lg.points(pid):.1f}")
 
 
-def _resolve(lg, names):
+def _resolve(names, pool=None):
     out = []
     for n in names:
-        hits = sleeper.find_player(n)
-        hits = [h for h in hits if h[0] in lg.rostered_ids() or True]
-        if not hits:
-            sys.exit(f"No player matching '{n}'")
-        out.append(hits[0][0])
+        try:
+            out.append(sleeper.resolve_player(n, pool))
+        except ValueError as e:
+            sys.exit(str(e))
     return out
 
 
@@ -234,8 +280,8 @@ def cmd_trade(args):
     r = _my_roster(lg, cfg)
     mine = list(r.get("players") or [])
 
-    give = _resolve(lg, args.give.split(","))
-    get = _resolve(lg, args.get.split(","))
+    give = _resolve(args.give.split(","), set(mine))
+    get = _resolve(args.get.split(","), lg.rostered_ids())
 
     for pid in give:
         if pid not in mine:
