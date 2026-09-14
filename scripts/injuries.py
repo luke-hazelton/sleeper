@@ -114,6 +114,8 @@ def main():
     args = ap.parse_args()
 
     cfg = sleeper.load_config()
+    if not cfg.get("league_id"):
+        sys.exit("No league configured. Run:  ff.py setup <your_sleeper_username>")
     lg = League(cfg["league_id"])
     if args.set or args.clear:
         edit(args, lg)

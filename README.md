@@ -40,7 +40,7 @@ python3 scripts/injuries.py --players "Omarion Hampton,Kyler Murray"
 python3 scripts/injuries.py --set "Kyler Murray" --week 3 --note "concussion" --source URL
 python3 scripts/injuries.py --set "Malik Davis" --season-ending
 
-./scripts/weekly.sh 2                     # everything at once, for week 2
+./scripts/weekly.sh 2                     # everything at once for week 2 (copy saved in reports/)
 
 python3 -m unittest discover tests        # offline unit tests (no network)
 ```
@@ -125,7 +125,7 @@ scripts/ff.py        main CLI
 scripts/ros.py       rest-of-season valuation + trade lineup impact
 scripts/injuries.py  injury return-week tracker
 scripts/needs.py     cross-league positional strength -> trade partner matching
-scripts/weekly.sh    runs the full weekly report
+scripts/weekly.sh    runs the full weekly report (copy saved to reports/, gitignored)
 tests/test_core.py   offline unit tests (python3 -m unittest discover tests)
 requirements.txt     optional deps only (certifi); everything else is stdlib
 data/injury_returns.json   recorded return weeks (committed, hand-curated)

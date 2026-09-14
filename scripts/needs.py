@@ -49,6 +49,23 @@ def team_profile(lg, roster, value, core):
     return out
 
 
+def league_medians(profiles, core):
+    """Median starter strength per position across all teams."""
+    n = len(profiles)
+    return {p: sorted(pr[p][0] for pr in profiles.values())[n // 2] for p in core}
+
+
+def rank_partners(profiles, my_id, need, have, med):
+    """Other teams ranked by fit: surplus at what I need, below median at what
+    I have. Returns [(score, roster_id)], best first."""
+    out = []
+    for rid, pr in profiles.items():
+        if rid != my_id:
+            out.append((pr[need][1] - (pr[have][0] - med[have]), rid))
+    out.sort(key=lambda c: -c[0])
+    return out
+
+
 def build_parser():
     # allow_abbrev=False: otherwise "--week 2" silently becomes "--weeks 2"
     ap = argparse.ArgumentParser(allow_abbrev=False)
@@ -101,8 +118,7 @@ def main():
         print(f"  {lg.owner_name(r):<24}{row}{tag}")
 
     # my weakest / strongest relative to league median
-    med = {p: sorted(profiles[r["roster_id"]][p][0] for r in lg.rosters)[len(lg.rosters)//2]
-           for p in core}
+    med = league_medians(profiles, core)
     print("\n  YOUR GAPS vs league median")
     gaps = sorted(core, key=lambda p: mine[p][0] - med[p])
     for p in gaps:
@@ -115,16 +131,9 @@ def main():
     have = gaps[-1]
     print(f"\n  TRADE THESIS: you are thinnest at {need}, deepest at {have}.")
     print(f"  Partners who are deep at {need} and thin at {have}:\n")
-    cands = []
-    for r in lg.rosters:
-        if r["roster_id"] == me["roster_id"]:
-            continue
-        pr = profiles[r["roster_id"]]
-        # they have surplus at what I need, and are below median at what I have
-        score = pr[need][1] - (pr[have][0] - med[have])
-        cands.append((score, r, pr))
-    cands.sort(key=lambda c: -c[0])
-    for score, r, pr in cands[:5]:
+    by_id = {r["roster_id"]: r for r in lg.rosters}
+    for score, rid in rank_partners(profiles, me["roster_id"], need, have, med)[:5]:
+        r, pr = by_id[rid], profiles[rid]
         print(f"    {lg.owner_name(r):<24} surplus {need}: {pr[need][1]:5.1f}"
               f"   their {have}: {pr[have][0]:5.1f} (median {med[have]:.1f})")
         surplus = pr[need][2][core[need]:][:3]

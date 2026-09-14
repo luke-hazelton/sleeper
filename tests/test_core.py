@@ -186,6 +186,44 @@ class NeedsTests(unittest.TestCase):
         with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
             ap.parse_args(["--week", "2", "--weeks", "3"])
 
+    def test_partner_ranking(self):
+        profiles = {1: {"RB": (10, 0, []), "TE": (12, 11, [])},
+                    2: {"RB": (15, 12, []), "TE": (8, 0, [])},
+                    3: {"RB": (14, 5, []), "TE": (11, 3, [])}}
+        med = needs.league_medians(profiles, {"RB": 1, "TE": 1})
+        self.assertEqual(med, {"RB": 14, "TE": 11})
+        # team 2: surplus RB 12, TE 3 below median -> 15; team 3: 5 - 0 -> 5
+        self.assertEqual(needs.rank_partners(profiles, 1, "RB", "TE", med), [(15, 2), (5, 3)])
+
+
+class RosTradeMathTests(unittest.TestCase):
+    def test_lineup_impact_sums_weeks_and_restores_week(self):
+        from ros import lineup_impact
+        lg = make_league({"q1": player("q1", "QB"), "r1": player("r1", "RB"),
+                          "r2": player("r2", "RB")},
+                         proj={"marker": row(0)}, positions=["QB", "RB", "BN"], week=1)
+        original_proj = lg.proj
+        weeks = {2: {"q1": row(10), "r1": row(5), "r2": row(3)},
+                 15: {"q1": row(10), "r2": row(3)}}  # r1 on bye in week 15
+        result = lineup_impact(lg, weeks, ["q1", "r1"], ["q1", "r2"], playoff_start=15)
+        self.assertEqual(result, (25, 26, 10, 13))
+        self.assertEqual(lg.week, 1)
+        self.assertIs(lg.proj, original_proj)
+
+
+class WaiverGainTests(unittest.TestCase):
+    def test_gain_is_lineup_improvement(self):
+        pts = {"q1": ("QB", 20), "r1": ("RB", 10), "r3": ("RB", 8),
+               "r2": ("RB", 12), "r4": ("RB", 5), "w0": ("WR", 0), "w1": ("WR", 0)}
+        lg = make_league({k: player(k, pos) for k, (pos, _) in pts.items()},
+                         proj={k: row(p) for k, (_, p) in pts.items()},
+                         positions=["QB", "RB", "FLEX", "BN"])
+        ranked = ff._rank_free_agents(lg, ["q1", "r1", "r3"], ["r2", "r4", "w0", "w1"],
+                                      trend={"w1": 5000})
+        # r2 bumps r3 out of FLEX (+4); r4 wouldn't start; w0 skipped (no
+        # projection, not trending); w1 kept because it's trending
+        self.assertEqual(ranked, [(4, 12, "r2"), (0, 5, "r4"), (0, 0, "w1")])
+
 
 if __name__ == "__main__":
     unittest.main()

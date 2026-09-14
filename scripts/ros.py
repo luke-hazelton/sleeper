@@ -66,6 +66,29 @@ class ROS:
                 f"{'GMS':>5}{'REG':>8}{'PLYF':>8}")
 
 
+def lineup_impact(lg, weeks, before, after, playoff_start):
+    """Optimal-lineup totals for two rosters, summed over `weeks` ({week: proj}).
+
+    Returns (before, after, before_playoffs, after_playoffs). Restores the
+    league's current week afterwards, so later lookups (e.g. injury tags) see
+    this week's data rather than the last week looped over.
+    """
+    saved = lg.week, lg.proj
+    tb = ta = tbp = tap = 0.0
+    try:
+        for wk, proj in weeks.items():
+            lg.set_week(wk, proj)
+            b, a = lg.starter_value(before), lg.starter_value(after)
+            tb += b
+            ta += a
+            if wk >= playoff_start:
+                tbp += b
+                tap += a
+    finally:
+        lg.set_week(*saved)
+    return tb, ta, tbp, tap
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--give"); ap.add_argument("--get")
@@ -144,13 +167,7 @@ def main():
     me = lg.roster_for_user(cfg["user_id"])
     mine = list(me.get("players") or [])
     after = [p for p in mine if p not in give] + get
-    tb = ta = tbp = tap = 0.0
-    for wk in ros.weeks:
-        lg.set_week(wk, ros.weeks[wk])
-        b, a = lg.starter_value(mine), lg.starter_value(after)
-        tb += b; ta += a
-        if wk >= po_start:
-            tbp += b; tap += a
+    tb, ta, tbp, tap = lineup_impact(lg, ros.weeks, mine, after, po_start)
     print(f"\n  Optimal lineup, weeks {start}-{args.end}:")
     print(f"    before {tb:8.1f}   after {ta:8.1f}   ({ta - tb:+.1f})")
     print(f"  Playoff weeks {po_start}-{args.end}:")

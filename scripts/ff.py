@@ -219,12 +219,26 @@ def cmd_matchup(args):
         print(f"  Changing your unlocked slots adds +{gain:.1f} projected (see ff.py lineup).")
 
 
+def _rank_free_agents(lg, mine, fas, trend):
+    """[(gain, projected pts, pid)], best first. Gain is how much adding the
+    player improves your optimal lineup. Players with no projection are
+    skipped unless they're trending."""
+    base = lg.starter_value(mine)
+    scored = []
+    for pid in fas:
+        pts = lg.points(pid)
+        if pts <= 0 and pid not in trend:
+            continue
+        scored.append((lg.starter_value(mine + [pid]) - base, pts, pid))
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+    return scored
+
+
 def cmd_waivers(args):
     cfg = _cfg_or_die()
     lg = League(cfg["league_id"], args.week)
     r = _my_roster(lg, cfg)
     mine = r.get("players") or []
-    base = lg.starter_value(mine)
 
     fas = lg.free_agents()
     if args.pos:
@@ -232,15 +246,7 @@ def cmd_waivers(args):
         fas = [p for p in fas if lg.pos(p) in want]
 
     trend = {t["player_id"]: t["count"] for t in sleeper.trending("add", 24, 200)}
-
-    scored = []
-    for pid in fas:
-        pts = lg.points(pid)
-        if pts <= 0 and pid not in trend:
-            continue
-        gain = lg.starter_value(mine + [pid]) - base
-        scored.append((gain, pts, pid))
-    scored.sort(key=lambda x: (-x[0], -x[1]))
+    scored = _rank_free_agents(lg, mine, fas, trend)
 
     print(f"\nTOP FREE AGENTS — Week {lg.week} — {cfg['league_name']}")
     print(f"(gain = added points to your optimal starting lineup)\n")
@@ -287,14 +293,11 @@ def cmd_trade(args):
         if pid not in mine:
             sys.exit(f"{lg.name(pid)} is not on your roster.")
 
-    # locate the partner roster holding the incoming players
-    partner = None
-    for rr in lg.rosters:
-        if rr["roster_id"] == r["roster_id"]:
-            continue
-        if any(p in (rr.get("players") or []) for p in get):
-            partner = rr
-            break
+    # rosters holding the incoming players; with more than one we can't tell
+    # who receives what you give, so partner impact needs a single partner
+    partners = [rr for rr in lg.rosters if rr["roster_id"] != r["roster_id"]
+                and any(p in (rr.get("players") or []) for p in get)]
+    partner = partners[0] if len(partners) == 1 else None
 
     my_after = [p for p in mine if p not in give] + get
     my_before = lg.starter_value(mine)
@@ -326,6 +329,10 @@ def cmd_trade(args):
             print("  BAD FOR YOU — decline unless you're buying long-term upside.")
         else:
             print("  LOSE-LOSE on current-week value.")
+    elif len(partners) > 1:
+        names = ", ".join(lg.owner_name(rr) for rr in partners)
+        print(f"  (incoming players are on {len(partners)} teams: {names}. Partner impact "
+              "not evaluated; check one team's players at a time)")
     else:
         print("  (incoming players are free agents / unrostered)")
     print("\n  Note: single-week lineup impact only. Weigh schedule, bye weeks,")
