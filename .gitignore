@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Cached Sleeper API responses and player DB — all regenerable
+data/cache/
+data/players_raw.json
+data/players_slim.json
+
+# Generated reports
+reports/*
+!reports/.gitkeep
+
+# macOS
+.DS_Store
