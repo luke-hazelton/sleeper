@@ -5,6 +5,9 @@ __pycache__/
 # Local league config (username / league id). Create with: ff.py setup <username>
 config.json
 
+# Your own injury notes / return weeks — roster-specific, edited with injuries.py
+data/injury_returns.json
+
 # Cached Sleeper API responses and player DB — all regenerable
 data/cache/
 data/players_raw.json

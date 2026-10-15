@@ -70,7 +70,9 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
   scored with your league's actual scoring settings (full PPR here).
 - **Injuries** are counted per week, in this order:
   1. A **recorded return week** (`data/injury_returns.json`, edited with `injuries.py`)
-     wins: 0 points before it, full projection from it on.
+     wins: 0 points before it, full projection from it on. The file is local to you —
+     see `data/injury_returns.example.json` for the shape (keys are Sleeper player
+     ids; `return_week: 99` means out for the season).
   2. Otherwise the **injury tag** (Out/IR/PUP → 0x, Doubtful → 0.25x, Questionable → 0.85x)
      applies only through the next week with no games played yet (plus the week in
      progress, if any). On a live Sunday that's this week and next; once Sleeper rolls
@@ -132,7 +134,8 @@ scripts/needs.py     cross-league positional strength -> trade partner matching
 scripts/weekly.sh    runs the full weekly report (copy saved to reports/, gitignored)
 tests/test_core.py   offline unit tests (python3 -m unittest discover tests)
 requirements.txt     optional deps only (certifi); everything else is stdlib
-data/injury_returns.json   recorded return weeks (committed, hand-curated)
+data/injury_returns.example.json   shape of the return-week file
+data/injury_returns.json   your recorded return weeks (gitignored, hand-curated)
 data/cache/          API responses (auto-expiring)
 data/players_raw.json / players_slim.json   player DB (refreshed daily)
 ```

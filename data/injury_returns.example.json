@@ -1,0 +1,10 @@
+{
+  "1234": {
+    "name": "Example Player",
+    "note": "hamstring; coach said 2-3 weeks",
+    "return_week": 7,
+    "season": "2026",
+    "source": "https://example.com/injury-report",
+    "updated": "2026-09-13"
+  }
+}
