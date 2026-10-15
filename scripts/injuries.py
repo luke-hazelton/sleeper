@@ -13,7 +13,7 @@ Usage:
 How a player's weekly projection is counted:
   1. A return week recorded here wins: 0 before it, full projection from it on.
   2. Otherwise the injury tag (Out/Doubtful/Questionable) only discounts weeks
-     up to the next one with no games played (plus any week in progress) — it
+     up to the next one with no games played (plus any week in progress). It
      describes the latest report, not the season.
   3. Later weeks use the projection feed as-is, which already zeroes players
      on multi-week IR (e.g. a rookie on IR-designated-to-return).
@@ -137,7 +137,7 @@ def main():
     start = sleeper.first_open_week(lg.season)
     weeks = load_weeks(lg.season, start, END_WEEK)
 
-    print(f"\nINJURIES — planning from week {start} — {cfg['league_name']}\n")
+    print(f"\nINJURIES | planning from week {start} | {cfg['league_name']}\n")
     if not pool:
         print("  No injured players.")
         return

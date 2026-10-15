@@ -2,8 +2,8 @@
 
 Decision tooling for a Sleeper fantasy football league (built against a 12-team, full PPR, SUPERFLEX league).
 
-Pulls live data from Sleeper's public API — rosters, projections, injuries, trending
-adds — and turns it into start/sit, waiver and trade recommendations.
+Pulls live data from Sleeper's public API (rosters, projections, injuries, trending
+adds) and turns it into start/sit, waiver and trade recommendations.
 
 No login required. Sleeper's read API is public; only your **username** is needed.
 
@@ -52,7 +52,7 @@ python3 -m unittest discover tests        # offline unit tests (no network)
 No packages are required. `pip install -r requirements.txt` only adds `certifi`, which
 avoids the curl fallback on macOS Python builds that lack root certificates.
 
-All commands accept `--week N`. Without it they use the current NFL week — which
+All commands accept `--week N`. Without it they use the current NFL week, which
 during a live Sunday is the week already in progress, so pass `--week N+1` when
 you're planning ahead.
 
@@ -70,7 +70,7 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
   scored with your league's actual scoring settings (full PPR here).
 - **Injuries** are counted per week, in this order:
   1. A **recorded return week** (`data/injury_returns.json`, edited with `injuries.py`)
-     wins: 0 points before it, full projection from it on. The file is local to you —
+     wins: 0 points before it, full projection from it on. The file is local to you;
      see `data/injury_returns.example.json` for the shape (keys are Sleeper player
      ids; `return_week: 99` means out for the season).
   2. Otherwise the **injury tag** (Out/IR/PUP → 0x, Doubtful → 0.25x, Questionable → 0.85x)
@@ -80,7 +80,7 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
      rest of the season.
   3. Later weeks use the **projection feed as-is**. The feed already zeroes players on
      multi-week IR (Jordyn Tyson projects 0 through week 5), but it does *not* know
-     about fresh short-term injuries — that's what recorded return weeks are for.
+     about fresh short-term injuries, which is what recorded return weeks are for.
 
   Discounted numbers are flagged with `*`.
 - **Lineup optimizer** fills dedicated slots before flex slots (most-constrained
@@ -99,7 +99,7 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
 - **Trade evaluation** compares optimal-lineup totals before/after for *both* sides,
   so you can see whether an offer is plausibly acceptable to the other manager.
 
-## Known limits — read before trusting a number
+## Known limits (read before trusting a number)
 
 - Projections are **pre-game snapshots**. A player injured mid-game keeps his stale
   projection until the feed refreshes (Kyler Murray projected 18.7 for Week 2 while
@@ -110,7 +110,7 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
   involving an injured player with suspicion.
 - `ff.py trade` is **single-week** and will mislead you on trades. Use `ros.py` instead:
   it aggregates weeks through 17 and splits regular season from playoffs (15-17).
-- Raw ROS points also mislead, in the opposite direction — they count bench production
+- Raw ROS points also mislead, in the opposite direction: they count bench production
   you'd never start. `ros.py --give/--get` reports **optimal-lineup impact**, which is
   the number to trust.
 - Neither tool prices **injury insurance**, which is often the real reason to trade

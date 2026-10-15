@@ -1,7 +1,7 @@
 # Sleeper API notes
 
 Base: `https://api.sleeper.app/v1`. No auth, no API key. ~1000 req/min limit.
-Read-only — nothing here can modify your team.
+Read-only: nothing here can modify your team.
 
 ## Documented endpoints used
 
@@ -19,7 +19,7 @@ Read-only — nothing here can modify your team.
 | `/players/nfl/trending/add?lookback_hours=24&limit=50` | league-wide add counts |
 | `/stats/nfl/regular/{season}/{week}` | actual stats once games are played |
 
-## Undocumented but stable — the projections endpoint
+## Undocumented but stable: the projections endpoint
 
 ```
 https://api.sleeper.app/projections/nfl/{season}/{week}
@@ -33,7 +33,7 @@ Rotowire (`company` field).
 
 Note it is on the bare host, **not** under `/v1`.
 
-Players with no real projection still appear, carrying only `adp_dd_ppr` — filter
+Players with no real projection still appear, carrying only `adp_dd_ppr`. Filter
 on `stats.pts_ppr != null` to get the meaningful rows.
 
 ## Gotchas

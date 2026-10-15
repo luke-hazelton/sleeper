@@ -107,7 +107,7 @@ def main():
     mine = profiles[me["roster_id"]]
 
     span = f"week {start}" if start == end else f"weeks {start}-{end}"
-    print(f"\nPOSITIONAL STRENGTH — {span} — {cfg['league_name']}")
+    print(f"\nPOSITIONAL STRENGTH | {span} | {cfg['league_name']}")
     print("(avg weekly pts of required starters | best surplus bench piece)")
     print("  required starters: " + ", ".join(f"{p} {n}" for p, n in core.items()) + "\n")
     print(f"  {'TEAM':<24}" + "".join(f"{p:>16}" for p in core))

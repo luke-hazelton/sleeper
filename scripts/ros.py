@@ -43,7 +43,7 @@ class ROS:
         return sum(self.pts(pid, w) for w in range(lo, hi + 1) if w in self.weeks)
 
     def games(self, pid, lo=None, hi=None):
-        """Weeks with a real projection — i.e. not a bye and not buried."""
+        """Weeks with a real projection, i.e. not a bye and not buried."""
         lo = lo or self.start
         hi = hi or self.end
         return sum(1 for w in range(lo, hi + 1)
@@ -110,8 +110,8 @@ def main():
     start = args.start or sleeper.first_open_week(lg.season)
     po_start = lg.info["settings"].get("playoff_week_start", 15)
 
-    print(f"\nREST OF SEASON — weeks {start}-{args.end} "
-          f"(playoffs {po_start}-{args.end}) — {cfg['league_name']}")
+    print(f"\nREST OF SEASON | weeks {start}-{args.end} "
+          f"(playoffs {po_start}-{args.end}) | {cfg['league_name']}")
     ros = ROS(lg, start, args.end, po_start)
 
     def resolve(names, pool=None):

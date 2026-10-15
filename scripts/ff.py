@@ -56,7 +56,7 @@ def cmd_setup(args):
         sys.exit(f"User {args.username} has no NFL leagues this season.")
     print(f"User: {u['display_name']}  (id {uid})\n")
     for i, lg in enumerate(leagues, 1):
-        print(f"  [{i}] {lg['name']}  —  {lg['total_rosters']} teams, {lg['status']}")
+        print(f"  [{i}] {lg['name']}  |  {lg['total_rosters']} teams, {lg['status']}")
     if len(leagues) == 1:
         pick = 0
         print("\nOnly one league; selecting it.")
@@ -81,7 +81,7 @@ def cmd_roster(args):
     cfg = _cfg_or_die()
     lg = League(cfg["league_id"], args.week)
     r = _my_roster(lg, cfg)
-    print(f"\n{cfg['league_name']} — Week {lg.week} — {lg.owner_name(r)}")
+    print(f"\n{cfg['league_name']} | Week {lg.week} | {lg.owner_name(r)}")
     print(f"Scoring: {lg.score_key}   Record: {r['settings'].get('wins',0)}-{r['settings'].get('losses',0)}\n")
     ids = r.get("players") or []
     by_pos = {}
@@ -118,7 +118,7 @@ def cmd_lineup(args):
     r = _my_roster(lg, cfg)
     slots, total, bench, current, fixed = _unlocked_lineup(lg, r)
 
-    print(f"\nOPTIMAL LINEUP — Week {lg.week} — {cfg['league_name']}\n")
+    print(f"\nOPTIMAL LINEUP | Week {lg.week} | {cfg['league_name']}\n")
     if fixed:
         print(f"  ({len(fixed)} starter(s) locked because their games started; kept in place)\n")
     for slot, pid, pts in slots:
@@ -157,7 +157,7 @@ def cmd_lineup(args):
 def _estimate(lg, pid, live):
     """(points so far, points still expected) for one starter. Finished games
     count actual points, unstarted games their projection, and in-progress
-    games half of the projection not yet reached — the feed has no game clock."""
+    games half of the projection not yet reached; the feed has no game clock."""
     actual = live.get(pid) or 0.0
     status = lg.game(pid)
     if status == "complete":
@@ -195,7 +195,7 @@ def cmd_matchup(args):
         return lg.owner_name(rr), scored, left, to_play
 
     sides = [side(mine)] + ([side(opp)] if opp else [])
-    print(f"\nWEEK {lg.week} MATCHUP — {cfg['league_name']}\n")
+    print(f"\nWEEK {lg.week} MATCHUP | {cfg['league_name']}\n")
     print(f"  {'TEAM':<24}{'SCORED':>8}{'LEFT (est)':>12}{'FINAL (est)':>13}")
     for nm, scored, left, _ in sides:
         print(f"  {nm:<24}{scored:8.1f}{left:12.1f}{scored + left:13.1f}")
@@ -211,7 +211,7 @@ def cmd_matchup(args):
             names = ", ".join(
                 f"{lg.name(p)} ({lg.points(p):.1f}{', live' if lg.game(p) != 'pre_game' else ''})"
                 for p in to_play)
-            print(f"  Still to play — {label}: {names}")
+            print(f"  Still to play ({label}): {names}")
 
     _, total, _, current, _ = _unlocked_lineup(lg, r)
     gain = total - sum(lg.points(p) for p in current)
@@ -248,7 +248,7 @@ def cmd_waivers(args):
     trend = {t["player_id"]: t["count"] for t in sleeper.trending("add", 24, 200)}
     scored = _rank_free_agents(lg, mine, fas, trend)
 
-    print(f"\nTOP FREE AGENTS — Week {lg.week} — {cfg['league_name']}")
+    print(f"\nTOP FREE AGENTS | Week {lg.week} | {cfg['league_name']}")
     print(f"(gain = added points to your optimal starting lineup)\n")
     print(f"  {'PLAYER':<{W}} {'POS':<3} {'TM':<3} {'OPP':<7} {'PROJ':>5} {'GAIN':>6}  ADDS/24h")
     for gain, pts, pid in scored[:args.num]:
@@ -303,7 +303,7 @@ def cmd_trade(args):
     my_before = lg.starter_value(mine)
     my_after_v = lg.starter_value(my_after)
 
-    print(f"\nTRADE EVALUATION — Week {lg.week} — {cfg['league_name']}\n")
+    print(f"\nTRADE EVALUATION | Week {lg.week} | {cfg['league_name']}\n")
     print("  YOU GIVE")
     for pid in give:
         print(_line(lg, pid))
@@ -322,11 +322,11 @@ def cmd_trade(args):
         print(f"  {lg.owner_name(partner)}: {t_before:.1f} -> {t_after:.1f}  ({td:+.1f})")
         print()
         if d > 0 and td > 0:
-            print("  WIN-WIN — both lineups improve. Strong case to offer this.")
+            print("  WIN-WIN: both lineups improve. Strong case to offer this.")
         elif d > 0 and td <= 0:
-            print("  GOOD FOR YOU — they lose lineup value, so expect pushback.")
+            print("  GOOD FOR YOU: they lose lineup value, so expect pushback.")
         elif d <= 0 and td > 0:
-            print("  BAD FOR YOU — decline unless you're buying long-term upside.")
+            print("  BAD FOR YOU: decline unless you're buying long-term upside.")
         else:
             print("  LOSE-LOSE on current-week value.")
     elif len(partners) > 1:
@@ -351,7 +351,7 @@ def cmd_league(args):
                      s.get("fpts", 0) + s.get("fpts_decimal", 0) / 100,
                      r.get("owner_id") == cfg["user_id"]))
     rows.sort(reverse=True)
-    print(f"\nPOWER RANKINGS — Week {lg.week} — {cfg['league_name']}")
+    print(f"\nPOWER RANKINGS | Week {lg.week} | {cfg['league_name']}")
     print(f"(by projected optimal lineup this week)\n")
     print(f"  {'#':<3}{'TEAM':<26}{'PROJ':>6}{'REC':>8}{'PTS':>9}")
     for i, (proj, nm, w, l, pts, me) in enumerate(rows, 1):
