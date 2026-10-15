@@ -9,11 +9,15 @@ No login required. Sleeper's read API is public; only your **username** is neede
 
 ## Setup
 
-Link your league once. This writes `config.json`, which is gitignored:
+Link your league once. This writes `config.json`, which is gitignored so your
+username and league id stay local:
 
 ```bash
 python3 scripts/ff.py setup <sleeper_username>
 ```
+
+See `config.example.json` for the shape. Every command exits with a pointer to
+`setup` if no config is present.
 
 ## Commands
 

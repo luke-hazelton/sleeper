@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Local league config (username / league id). Create with: ff.py setup <username>
+config.json
+
 # Cached Sleeper API responses and player DB — all regenerable
 data/cache/
 data/players_raw.json
