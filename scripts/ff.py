@@ -98,12 +98,27 @@ def cmd_roster(args):
     print("  * = projection discounted for injury risk")
 
 
+def _current_starters(lg, r):
+    """This week's lineup as actually set. The rosters endpoint's `starters`
+    field is the season-long default and goes stale as soon as you edit a
+    week, so prefer matchups/<week>, which is the authoritative per-week
+    lineup. Falls back to the roster field if the week has no matchup."""
+    try:
+        ms = sleeper.matchups(lg.id, lg.week)
+    except Exception:
+        return list(r.get("starters") or [])
+    mine = next((m for m in ms if m["roster_id"] == r["roster_id"]), None)
+    if mine and (mine.get("starters") or None):
+        return list(mine["starters"])
+    return list(r.get("starters") or [])
+
+
 def _unlocked_lineup(lg, r):
     """Best lineup you can still set: starters whose games kicked off stay in
     their slots, and bench players whose games started can't come in.
     Returns (slots, total, bench, current_starters, locked_slots)."""
     n_slots = len([s for s in lg.roster_positions if s not in BENCH_SLOTS])
-    cur_slots = list(r.get("starters") or [])[:n_slots]
+    cur_slots = _current_starters(lg, r)[:n_slots]
     current = [p for p in cur_slots if p and p != "0"]
     fixed = {i: p for i, p in enumerate(cur_slots) if p and p != "0" and lg.locked(p)}
     locked_in = set(fixed.values())
