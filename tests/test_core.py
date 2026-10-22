@@ -18,9 +18,13 @@ POSITIONS = ["QB", "RB", "WR", "FLEX", "SUPER_FLEX", "BN", "BN"]
 
 
 def make_league(players, proj=None, positions=POSITIONS, week=2, horizon=2,
-                returns=None, games=None):
+                returns=None, games=None, settings=None, rosters=None):
     """A League built from in-memory data, skipping the API-backed __init__."""
     lg = object.__new__(League)
+    lg.id = "L1"
+    lg.info = {"settings": settings or {}}
+    lg.rosters = rosters or []
+    lg.users = {}
     lg.season = "2026"
     lg.week = week
     lg.status_horizon = horizon
@@ -218,11 +222,14 @@ class WaiverGainTests(unittest.TestCase):
         lg = make_league({k: player(k, pos) for k, (pos, _) in pts.items()},
                          proj={k: row(p) for k, (_, p) in pts.items()},
                          positions=["QB", "RB", "FLEX", "BN"])
-        ranked = ff._rank_free_agents(lg, ["q1", "r1", "r3"], ["r2", "r4", "w0", "w1"],
-                                      trend={"w1": 5000})
+        rows, drops = ff._waiver_board(lg, ["q1", "r1", "r3"], ["r2", "r4", "w0", "w1"],
+                                       trend={"w1": 5000}, weeks={2: lg.proj})
         # r2 bumps r3 out of FLEX (+4); r4 wouldn't start; w0 skipped (no
-        # projection, not trending); w1 kept because it's trending
-        self.assertEqual(ranked, [(4, 12, "r2"), (0, 5, "r4"), (0, 0, "w1")])
+        # projection, not trending); w1 kept because it's trending. No
+        # capacity given, so nobody has to be dropped.
+        self.assertEqual(rows, [(4, 4, 12, "r2", None), (0, 0, 5, "r4", None),
+                                (0, 0, 0, "w1", None)])
+        self.assertEqual(drops, [])
 
 
 if __name__ == "__main__":

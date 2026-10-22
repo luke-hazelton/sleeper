@@ -1,6 +1,7 @@
 """Analysis layer: roster valuation, lineup optimization, waiver & trade logic."""
 import json
 import os
+import re
 
 import sleeper
 
@@ -30,6 +31,35 @@ BENCH_SLOTS = {"BN", "IR", "TAXI"}
 # Injury designations that make a player risky or unusable
 OUT_STATUSES = {"Out", "IR", "PUP", "Sus", "NA", "DNR"}
 RISK_STATUSES = {"Questionable", "Doubtful"}
+
+
+# Sleeper stores "no trade deadline" as week 99
+NO_DEADLINE = 99
+
+# Trade inputs that name a draft pick rather than a player ("2027 1st", "Round 2")
+PICK_RE = re.compile(r"\b(?:19|20)\d\d\b|\b(?:1st|2nd|3rd|\d+th|round|rd|pick)\b", re.I)
+
+
+def looks_like_pick(name):
+    return bool(PICK_RE.search(name))
+
+
+def trade_window(deadline, week):
+    """(trades still allowed?, message) for the current NFL week.
+
+    Sleeper's setting names the deadline week; the exact cutoff inside that
+    week is league-specific, so the deadline week itself is allowed with a
+    warning rather than refused.
+    """
+    if deadline is None:
+        return True, "No trade deadline."
+    if week > deadline:
+        return False, f"The week-{deadline} trade deadline has passed (it's week {week})."
+    if week == deadline:
+        return True, (f"Trade deadline is THIS week (week {deadline}). Confirm in the "
+                      "Sleeper app that trades are still open.")
+    left = deadline - week
+    return True, f"Trade deadline: week {deadline} ({left} week{'s' * (left != 1)} away)."
 
 
 def injury_multiplier(status):
@@ -68,6 +98,53 @@ class League:
         """Point valuation at another week's projections (used by ROS loops)."""
         self.week, self.proj = week, proj
         self._games = None
+
+    # ---------- league settings ----------
+
+    def setting(self, key, default=None):
+        val = (self.info.get("settings") or {}).get(key)
+        return default if val is None else val
+
+    @property
+    def playoff_start(self):
+        return self.setting("playoff_week_start", 15)
+
+    @property
+    def reg_end(self):
+        """Last regular-season week."""
+        return self.playoff_start - 1
+
+    @property
+    def trade_deadline(self):
+        """Deadline week, or None when the league has none."""
+        d = self.setting("trade_deadline")
+        return None if not d or d >= NO_DEADLINE else d
+
+    def trade_note(self):
+        """Caveat for trades the tools can't fully value, or None."""
+        parts = []
+        if self.setting("pick_trading"):
+            parts.append("draft picks")
+        if self.setting("max_keepers"):
+            parts.append(f"keeper value ({self.setting('max_keepers')} keeper"
+                         f"{'s' * (self.setting('max_keepers') != 1)})")
+        if not parts:
+            return None
+        return (f"Not valued: {' or '.join(parts)}. Numbers cover this season's "
+                "points only; weigh those separately.")
+
+    # ---------- roster capacity ----------
+
+    @property
+    def active_capacity(self):
+        """Active roster spots (starters + bench). IR and taxi are extra."""
+        return sum(1 for s in self.roster_positions if s not in ("IR", "TAXI"))
+
+    @staticmethod
+    def active_players(roster):
+        """Players taking an active spot, i.e. not stashed on IR or taxi."""
+        held = set(roster.get("reserve") or []) | set(roster.get("taxi") or [])
+        return [p for p in roster.get("players") or [] if p not in held]
 
     # ---------- helpers ----------
 

@@ -3,18 +3,24 @@
 
 Usage:
   ff.py setup <sleeper_username>   Link your account, pick a league
+  ff.py leagues                    Leagues saved at setup (* = active)
+  ff.py use <#|name|id>            Switch the active league
   ff.py roster [--week N]          Your roster w/ projections & injuries
   ff.py lineup [--week N]          Optimal start/sit vs your current lineup
   ff.py matchup [--week N]         Your head-to-head matchup projection
   ff.py waivers [--pos RB] [-n 15] Best available free agents + trending
   ff.py trade --give A,B --get C   Evaluate a trade by lineup impact
   ff.py league                     Power rankings across the league
+  ff.py activity [--weeks 2]       Recent adds, drops, trades and contested claims
 """
 import argparse
 import sys
 
+import datetime
+
 import sleeper
-from analysis import League, injury_multiplier, BENCH_SLOTS
+from analysis import League, BENCH_SLOTS, trade_window
+from ros import END_WEEK, load_weeks, trade_guard, week_values
 
 W = 26  # name column width
 
@@ -28,10 +34,7 @@ def _inj_tag(status):
 
 
 def _cfg_or_die():
-    cfg = sleeper.load_config()
-    if not cfg.get("league_id"):
-        sys.exit("No league configured. Run:  ff.py setup <your_sleeper_username>")
-    return cfg
+    return sleeper.require_config()
 
 
 def _line(lg, pid, slot=None):
@@ -66,8 +69,40 @@ def cmd_setup(args):
     sleeper.save_config({
         "username": args.username, "user_id": uid,
         "league_id": chosen["league_id"], "league_name": chosen["name"],
+        "leagues": [{"league_id": lg["league_id"], "league_name": lg["name"]}
+                    for lg in leagues],
     })
     print(f"\nSaved. League: {chosen['name']} ({chosen['league_id']})")
+    if len(leagues) > 1:
+        print("Switch later with:  ff.py use <#|name>   (or FF_LEAGUE=<#|name> for one command)")
+
+
+def _saved_leagues():
+    cfg = sleeper.require_config()
+    return cfg, cfg.get("leagues") or [{"league_id": cfg["league_id"],
+                                        "league_name": cfg["league_name"]}]
+
+
+def cmd_leagues(args):
+    cfg, leagues = _saved_leagues()
+    for i, lg in enumerate(leagues, 1):
+        star = "*" if lg["league_id"] == cfg["league_id"] else " "
+        print(f" {star}[{i}] {lg['league_name']}  ({lg['league_id']})")
+    if len(leagues) == 1:
+        print("\nOnly one league saved. Re-run setup to pick up leagues joined since.")
+
+
+def cmd_use(args):
+    cfg, leagues = _saved_leagues()
+    try:
+        chosen = sleeper.pick_league(leagues, args.league)
+    except ValueError as e:
+        sys.exit(str(e))
+    stored = sleeper._read_config()
+    stored.update(league_id=chosen["league_id"], league_name=chosen["league_name"],
+                  leagues=leagues)
+    sleeper.save_config(stored)
+    print(f"Active league: {chosen['league_name']} ({chosen['league_id']})")
 
 
 def _my_roster(lg, cfg):
@@ -234,19 +269,83 @@ def cmd_matchup(args):
         print(f"  Changing your unlocked slots adds +{gain:.1f} projected (see ff.py lineup).")
 
 
-def _rank_free_agents(lg, mine, fas, trend):
-    """[(gain, projected pts, pid)], best first. Gain is how much adding the
-    player improves your optimal lineup. Players with no projection are
-    skipped unless they're trending."""
-    base = lg.starter_value(mine)
-    scored = []
-    for pid in fas:
-        pts = lg.points(pid)
-        if pts <= 0 and pid not in trend:
+def _waiver_board(lg, mine, fas, trend, weeks, active=None, capacity=None):
+    """Free agents ranked by what adding them does to your optimal lineup.
+
+    Returns (rows, drops). Each row is (gain, ros_net, pts, pid, drop): gain
+    is this week's lineup change, ros_net the change summed over `weeks`
+    ({week: projections}), and drop the player cut to make room, or None
+    while `active` (players holding active spots) is under `capacity`.
+    `drops` lists [(ros value, pid)] for the droppable players, least
+    valuable first. Free agents with no projection are skipped unless
+    they're trending.
+
+    Drops are chosen on rest-of-season value, never this week alone, so an
+    injured starter who scores 0 this week isn't the one to cut. Each add is
+    tried against the least valuable player overall and the least valuable
+    one at its own position (so a kicker replaces your kicker).
+    """
+    active = list(mine) if active is None else list(active)
+    full = capacity is not None and len(active) >= capacity
+
+    def season(pools):
+        totals = [0.0] * len(pools)
+        for vals in week_values(lg, weeks, pools).values():
+            totals = [t + v for t, v in zip(totals, vals)]
+        return totals
+
+    base = season([mine])[0]
+    drops = []
+    if full:
+        vals = season([[p for p in mine if p != d] for d in active])
+        drops = sorted(zip((base - v for v in vals), active))
+
+    pools, tried = [], []
+    for fa in fas:
+        if lg.points(fa) <= 0 and fa not in trend:
             continue
-        scored.append((lg.starter_value(mine + [pid]) - base, pts, pid))
-    scored.sort(key=lambda x: (-x[0], -x[1]))
-    return scored
+        options = [None]
+        if full:
+            same = next((d for _, d in drops if lg.pos(d) == lg.pos(fa)), None)
+            options = list(dict.fromkeys(d for d in (drops[0][1], same) if d))
+        for d in options:
+            pools.append([p for p in mine if p != d] + [fa])
+            tried.append((fa, d))
+
+    best = {}
+    for (fa, d), pool, v in zip(tried, pools, season(pools)):
+        if fa not in best or v - base > best[fa][0]:
+            best[fa] = (v - base, d, pool)
+
+    week_base = lg.starter_value(mine)
+    rows = [(lg.starter_value(pool) - week_base, net, lg.points(fa), fa, d)
+            for fa, (net, d, pool) in best.items()]
+    rows.sort(key=lambda r: (-r[0], -r[1], -r[2]))
+    return rows, drops
+
+
+def faab_bid(left, ros_net, n_weeks):
+    """Rough max FAAB bid: weekly lineup gain over 20 points, as a share of
+    what's left, capped at half of it. A starting point, not a market price."""
+    if left <= 0 or n_weeks <= 0 or ros_net <= 0:
+        return 0
+    return round(left * min(0.5, ros_net / n_weeks / 20))
+
+
+def waiver_status(lg, roster):
+    """One line on how your claims compete: FAAB left or waiver priority."""
+    st = roster.get("settings") or {}
+    n = len(lg.rosters)
+    if lg.setting("waiver_type") == 2:
+        budget = lg.setting("waiver_budget", 100)
+        left = budget - st.get("waiver_budget_used", 0)
+        return f"FAAB: ${left} of ${budget} left.", left
+    pos = st.get("waiver_position")
+    if not pos:
+        return "Waiver priority unknown.", None
+    kind = "reverse standings" if lg.setting("waiver_type") == 1 else "rolling"
+    ahead = "nobody claims" if pos == 1 else f"{pos - 1} team{'s' * (pos != 2)} claim"
+    return f"Waiver priority: #{pos} of {n} ({kind}); {ahead} before you.", None
 
 
 def cmd_waivers(args):
@@ -254,26 +353,45 @@ def cmd_waivers(args):
     lg = League(cfg["league_id"], args.week)
     r = _my_roster(lg, cfg)
     mine = r.get("players") or []
+    active = lg.active_players(r)
 
     fas = lg.free_agents()
     if args.pos:
         want = {p.strip().upper() for p in args.pos.split(",")}
         fas = [p for p in fas if lg.pos(p) in want]
 
+    start = args.week or sleeper.first_open_week(lg.season)
+    weeks = load_weeks(lg.season, start, END_WEEK)
     trend = {t["player_id"]: t["count"] for t in sleeper.trending("add", 24, 200)}
-    scored = _rank_free_agents(lg, mine, fas, trend)
+    rows, drops = _waiver_board(lg, mine, fas, trend, weeks, active, lg.active_capacity)
+    if args.sort == "ros":
+        rows.sort(key=lambda x: (-x[1], -x[0], -x[2]))
 
+    status, faab_left = waiver_status(lg, r)
+    n_weeks = len(weeks)
     print(f"\nTOP FREE AGENTS | Week {lg.week} | {cfg['league_name']}")
-    print(f"(gain = added points to your optimal starting lineup)\n")
-    print(f"  {'PLAYER':<{W}} {'POS':<3} {'TM':<3} {'OPP':<7} {'PROJ':>5} {'GAIN':>6}  ADDS/24h")
-    for gain, pts, pid in scored[:args.num]:
+    ir = len(mine) - len(active)
+    print(f"  Roster {len(active)}/{lg.active_capacity} active"
+          + (f" (+{ir} IR/taxi)" if ir else "") + f". {status}")
+    if drops:
+        val, pid = drops[0]
+        print(f"  Roster is full, so each add assumes the DROP shown. Least valuable overall: "
+              f"{lg.name(pid)} ({val:+.1f} to your lineup, weeks {start}-{END_WEEK}).")
+    print(f"  GAIN = change to this week's optimal lineup; ROS = change over weeks "
+          f"{start}-{END_WEEK}" + (" | BID = rough max FAAB bid" if faab_left is not None else ""))
+    print()
+    bid_col = f"{'BID':>5}" if faab_left is not None else ""
+    print(f"  {'PLAYER':<{W}} {'POS':<3} {'TM':<3} {'OPP':<7} {'PROJ':>5} {'GAIN':>6} "
+          f"{'ROS':>6}{bid_col}  {'DROP':<18} ADDS/24h")
+    for gain, net, pts, pid, drop in rows[:args.num]:
         nm = lg.name(pid) + _inj_tag(lg.injury(pid))
         opp = lg.opponent(pid) or ("BYE" if lg.proj.get(pid) else "n/a")
         adds = trend.get(pid)
         a = f"{adds:,}" if adds else "-"
-        g = f"+{gain:.1f}" if gain > 0 else "  -"
+        bid = f"{'$' + str(faab_bid(faab_left, net, n_weeks)):>5}" if faab_left is not None else ""
+        dn = lg.name(drop)[:18] if drop else "-"
         print(f"  {nm:<{W}} {lg.pos(pid):<3} {lg.team_of(pid):<3} vs {opp:<4} "
-              f"{pts:5.1f} {g:>6}  {a}")
+              f"{pts:5.1f} {gain:+6.1f} {net:+6.1f}{bid}  {dn:<18} {a}")
 
     fa_set = set(fas)
     hot = [(c, p) for p, c in trend.items() if p in fa_set]
@@ -300,6 +418,9 @@ def cmd_trade(args):
     lg = League(cfg["league_id"], args.week)
     r = _my_roster(lg, cfg)
     mine = list(r.get("players") or [])
+    err = trade_guard(lg, args.give.split(",") + args.get.split(","), args.ignore_deadline)
+    if err:
+        sys.exit(err)
 
     give = _resolve(args.give.split(","), set(mine))
     get = _resolve(args.get.split(","), lg.rostered_ids())
@@ -318,7 +439,8 @@ def cmd_trade(args):
     my_before = lg.starter_value(mine)
     my_after_v = lg.starter_value(my_after)
 
-    print(f"\nTRADE EVALUATION | Week {lg.week} | {cfg['league_name']}\n")
+    print(f"\nTRADE EVALUATION | Week {lg.week} | {cfg['league_name']}")
+    print("  " + trade_window(lg.trade_deadline, sleeper.current_week()[0])[1] + "\n")
     print("  YOU GIVE")
     for pid in give:
         print(_line(lg, pid))
@@ -351,7 +473,10 @@ def cmd_trade(args):
     else:
         print("  (incoming players are free agents / unrostered)")
     print("\n  Note: single-week lineup impact only. Weigh schedule, bye weeks,")
-    print("  injury recovery and rest-of-season upside before deciding.")
+    print("  injury recovery and rest-of-season upside before deciding (ros.py).")
+    note = lg.trade_note()
+    if note:
+        print(f"  {note}")
 
 
 def cmd_league(args):
@@ -374,20 +499,101 @@ def cmd_league(args):
         print(f"  {i:<3}{nm:<26}{proj:6.1f}{f'{w}-{l}':>8}{pts:9.1f}{star}")
 
 
+def describe_tx(lg, t, team):
+    """One line for a completed transaction. `team` maps roster_id -> name."""
+    kind = {"trade": "TRADE", "waiver": "WAIVER", "free_agent": "FA",
+            "commissioner": "COMM"}.get(t.get("type"), (t.get("type") or "?").upper())
+    adds, drops = t.get("adds") or {}, t.get("drops") or {}
+    if t.get("type") == "trade":
+        got = {}
+        for pid, rid in adds.items():
+            got.setdefault(rid, []).append(lg.name(pid))
+        for pk in t.get("draft_picks") or []:
+            got.setdefault(pk["owner_id"], []).append(
+                f"{pk['season']} round {pk['round']} pick (orig. {team.get(pk['roster_id'], '?')})")
+        sides = "; ".join(f"{team.get(rid, '?')} gets {', '.join(v)}" for rid, v in got.items())
+        return f"{kind:<7}{sides}"
+    rid = (t.get("roster_ids") or [None])[0]
+    parts = [f"+{lg.name(p)}" for p in adds] + [f"-{lg.name(p)}" for p in drops]
+    bid = (t.get("settings") or {}).get("waiver_bid")
+    if bid is not None:
+        parts.append(f"(${bid})")
+    return f"{kind:<7}{team.get(rid, '?')}: {' '.join(parts)}"
+
+
+def contested_claims(txs):
+    """{pid: (claims, winning roster_id or None)} for waiver targets claimed
+    by more than one team."""
+    out = {}
+    for t in txs:
+        if t.get("type") != "waiver":
+            continue
+        for pid, rid in (t.get("adds") or {}).items():
+            n, won = out.get(pid, (0, None))
+            out[pid] = (n + 1, rid if t.get("status") == "complete" else won)
+    return {p: v for p, v in out.items() if v[0] > 1}
+
+
+def cmd_activity(args):
+    cfg = _cfg_or_die()
+    lg = League(cfg["league_id"])
+    cw = sleeper.current_week()[0]
+    weeks = range(max(1, cw - args.weeks + 1), cw + 1)
+    txs = []
+    for wk in weeks:
+        for t in sleeper.transactions(lg.id, wk):
+            txs.append(dict(t, week=wk))
+    txs.sort(key=lambda t: -(t.get("status_updated") or 0))
+    team = {r["roster_id"]: lg.owner_name(r) for r in lg.rosters}
+    done = [t for t in txs if t.get("status") == "complete"]
+
+    print(f"\nLEAGUE ACTIVITY | weeks {weeks[0]}-{weeks[-1]} | {cfg['league_name']}\n")
+    if not done:
+        print("  No completed transactions.")
+    for t in done[:args.num]:
+        when = datetime.datetime.fromtimestamp((t.get("status_updated") or 0) / 1000)
+        print(f"  wk {t['week']:<3}{when:%a %b %d}  {describe_tx(lg, t, team)}")
+    if len(done) > args.num:
+        print(f"  ... {len(done) - args.num} more (raise -n)")
+
+    contested = contested_claims(txs)
+    if contested:
+        print("\n  CONTESTED WAIVER CLAIMS (what the league is chasing)")
+        for pid, (n, won) in sorted(contested.items(), key=lambda x: -x[1][0]):
+            print(f"    {lg.name(pid):<{W}} {n} claims, won by {team.get(won, 'nobody')}")
+
+    rostered = lg.rostered_ids()
+    dropped = {p for t in done for p in (t.get("drops") or {}) if p not in rostered}
+    back = sorted((p for p in dropped if lg.points(p) > 0), key=lambda p: -lg.points(p))
+    if back:
+        print(f"\n  DROPPED AND STILL AVAILABLE (week {lg.week} projection)")
+        for pid in back[:8]:
+            print(f"    {lg.name(pid):<{W}} {lg.pos(pid):<3} {lg.team_of(pid):<3} "
+                  f"{lg.points(pid):5.1f}")
+    print("\n  Injuries on other rosters (trade triggers):  injuries.py --league")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("setup"); s.add_argument("username"); s.set_defaults(f=cmd_setup)
+    s = sub.add_parser("leagues"); s.set_defaults(f=cmd_leagues)
+    s = sub.add_parser("use"); s.add_argument("league"); s.set_defaults(f=cmd_use)
+    s = sub.add_parser("activity"); s.add_argument("--weeks", type=int, default=2)
+    s.add_argument("-n", "--num", type=int, default=25); s.set_defaults(f=cmd_activity)
     for nm, fn in (("roster", cmd_roster), ("lineup", cmd_lineup),
                    ("matchup", cmd_matchup), ("league", cmd_league)):
         s = sub.add_parser(nm); s.add_argument("--week", type=int); s.set_defaults(f=fn)
     s = sub.add_parser("waivers"); s.add_argument("--week", type=int)
     s.add_argument("--pos"); s.add_argument("-n", "--num", type=int, default=15)
+    s.add_argument("--sort", choices=("week", "ros"), default="week",
+                   help="rank by this week's gain (default) or rest-of-season gain")
     s.set_defaults(f=cmd_waivers)
     s = sub.add_parser("trade"); s.add_argument("--week", type=int)
     s.add_argument("--give", required=True); s.add_argument("--get", required=True)
+    s.add_argument("--ignore-deadline", action="store_true")
     s.set_defaults(f=cmd_trade)
 
     args = ap.parse_args()
