@@ -19,15 +19,23 @@ python3 scripts/ff.py setup <sleeper_username>
 See `config.example.json` for the shape. Every command exits with a pointer to
 `setup` if no config is present.
 
+In more than one league? `setup` saves all of them. `ff.py leagues` lists them,
+`ff.py use <#|name>` switches the active one, and `FF_LEAGUE=<#|name|id>` in front
+of any command uses another league for just that run.
+
 ## Commands
 
 ```bash
 python3 scripts/ff.py roster              # your roster + projections + injuries
 python3 scripts/ff.py lineup              # optimal start/sit (locked players stay put)
 python3 scripts/ff.py matchup             # live score + estimated final
-python3 scripts/ff.py waivers -n 15       # best free agents, ranked by lineup gain
+python3 scripts/ff.py waivers -n 15       # best free agents, ranked by lineup gain (with drops)
 python3 scripts/ff.py waivers --pos RB    # ...filtered to a position
+python3 scripts/ff.py waivers --sort ros  # ...ranked by rest-of-season gain
 python3 scripts/ff.py league              # power rankings
+python3 scripts/ff.py activity            # recent adds/drops/trades, contested claims
+python3 scripts/playoffs.py               # playoff odds for every team + your schedule
+python3 scripts/accuracy.py               # projection feed vs actual scoring; lineup efficiency
 python3 scripts/needs.py                  # positional strength (rest of season) + trade partners
 python3 scripts/needs.py --weeks 1        # ...same, for just the next week
 python3 scripts/needs.py --week 5         # ...same, for week 5 only
@@ -37,6 +45,7 @@ python3 scripts/ff.py trade --give "Geno Smith,Travis Kelce" --get "Travis Etien
 python3 scripts/ros.py --give "Geno Smith" --get "Travis Etienne"
 python3 scripts/ros.py --pos RB -n 20        # ROS ranks + who owns them
 python3 scripts/ros.py --players "Josh Allen,Kyler Murray"
+python3 scripts/ros.py --byes                # your lineup week by week: bye crunches, open slots
 
 # injury return weeks (feeds into every ROS number)
 python3 scripts/injuries.py                  # how your injured players are being counted
@@ -95,9 +104,31 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
     count actual points plus half of the projection not yet reached. The feed has no
     game clock, so that last part is rough.
 - **Waiver "GAIN"** = how much a player would add to your *optimal starting lineup*,
-  not his raw projection. A great player you'd never start scores 0 gain.
+  not his raw projection. A great player you'd never start scores 0 gain. `ROS` is the
+  same change summed over the rest of the season.
+  - When your active roster is full (IR and taxi don't count), every add is scored
+    *after a drop*, shown in the `DROP` column. Drops are judged on rest-of-season
+    lineup value, so an injured starter who scores 0 this week isn't the one cut.
+    Each add is tried against your least valuable player and your least valuable
+    one at its position (so a kicker can replace your kicker); the better wins.
+  - The header shows your waiver priority, or in FAAB leagues your budget left plus
+    a rough `BID`: weekly lineup gain over 20 points as a share of what's left,
+    capped at half. Treat it as a starting point, not a market price.
 - **Trade evaluation** compares optimal-lineup totals before/after for *both* sides,
   so you can see whether an offer is plausibly acceptable to the other manager.
+  Both trade commands show the trade-deadline countdown, refuse trades after the
+  deadline (`--ignore-deadline` overrides), refuse draft picks (they can't be
+  valued), and say when you'd need an open roster spot to take the deal.
+- **Playoff odds** (`playoffs.py`) simulate the remaining regular season 10,000 times.
+  Sleeper publishes every pairing up front, so each game is known; each team scores
+  its projected optimal lineup that week plus noise sized from how much teams'
+  actual weekly scores have swung this season. A week in progress starts from the
+  live score. Standings ties go to points for. `needs.py` uses the result to say
+  whether you should be buying or selling before it pitches trades.
+- **Projection accuracy** (`accuracy.py`) checks the feed against completed weeks.
+  Its noise floor is the error you should expect between two players' ROS totals;
+  a `ros.py` edge well under it is noise. Lineup efficiency compares each team's
+  points with Sleeper's max-possible points (`ppts`).
 
 ## Known limits (read before trusting a number)
 
@@ -109,7 +140,16 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
   *entire* season, which made trading him look free. Treat any older trade numbers
   involving an injured player with suspicion.
 - `ff.py trade` is **single-week** and will mislead you on trades. Use `ros.py` instead:
-  it aggregates weeks through 17 and splits regular season from playoffs (15-17).
+  it aggregates weeks through 17 and splits regular season from playoffs (playoff
+  start comes from your league settings).
+- **Draft picks and keepers aren't valued.** Trades naming a pick are refused; in
+  keeper or pick-trading leagues every trade result reminds you that only this
+  season's points are counted.
+- Playoff odds treat each week's score as independent noise around the projection
+  and don't model divisions.
+- `needs.py` measures the dedicated QB/RB/WR/TE slots (SUPER_FLEX counted as QB).
+  FLEX, K and DEF aren't in its strength numbers; `ros.py --byes` covers the whole
+  lineup.
 - Raw ROS points also mislead, in the opposite direction: they count bench production
   you'd never start. `ros.py --give/--get` reports **optimal-lineup impact**, which is
   the number to trust.
@@ -127,12 +167,14 @@ and stops instead of guessing. `ros.py` also refuses to "give" a player you don'
 ```
 scripts/sleeper.py   API client + on-disk caching
 scripts/analysis.py  League model, scoring, injury availability, lineup optimizer
-scripts/ff.py        main CLI
-scripts/ros.py       rest-of-season valuation + trade lineup impact
+scripts/ff.py        main CLI (roster, lineup, matchup, waivers, trade, league, activity)
+scripts/ros.py       rest-of-season valuation, trade lineup impact, bye-week report
+scripts/playoffs.py  playoff odds simulation
+scripts/accuracy.py  projection accuracy + lineup efficiency
 scripts/injuries.py  injury return-week tracker
 scripts/needs.py     cross-league positional strength -> trade partner matching
 scripts/weekly.sh    runs the full weekly report (copy saved to reports/, gitignored)
-tests/test_core.py   offline unit tests (python3 -m unittest discover tests)
+tests/               offline unit tests (python3 -m unittest discover tests); CI runs them
 requirements.txt     optional deps only (certifi); everything else is stdlib
 data/injury_returns.example.json   shape of the return-week file
 data/injury_returns.json   your recorded return weeks (gitignored, hand-curated)

@@ -26,9 +26,7 @@ import sys
 
 import sleeper
 from analysis import League, RETURNS_FILE, SEASON_OVER
-from ros import load_weeks
-
-END_WEEK = 17
+from ros import END_WEEK, load_weeks
 
 
 def _read_all():
@@ -113,9 +111,7 @@ def main():
     ap.add_argument("--source", default="")
     args = ap.parse_args()
 
-    cfg = sleeper.load_config()
-    if not cfg.get("league_id"):
-        sys.exit("No league configured. Run:  ff.py setup <your_sleeper_username>")
+    cfg = sleeper.require_config()
     lg = League(cfg["league_id"])
     if args.set or args.clear:
         edit(args, lg)

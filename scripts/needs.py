@@ -13,7 +13,8 @@ import argparse
 import sys
 
 import sleeper
-from analysis import League
+from analysis import BENCH_SLOTS, League, trade_window
+from playoffs import outlook, playoff_odds
 from ros import ROS
 
 POSITIONS = ("QB", "RB", "WR", "TE")
@@ -31,6 +32,16 @@ def core_needs(roster_positions):
         if pos in POSITIONS:
             need[pos] = need.get(pos, 0) + 1
     return {p: need[p] for p in POSITIONS if p in need}
+
+
+def uncounted_slots(roster_positions):
+    """Starting slots core_needs leaves out, e.g. "FLEX x2, K, DEF"."""
+    out = {}
+    for slot in roster_positions:
+        if slot in BENCH_SLOTS or slot == "SUPER_FLEX" or slot in POSITIONS:
+            continue
+        out[slot] = out.get(slot, 0) + 1
+    return ", ".join(f"{s} x{n}" if n > 1 else s for s, n in out.items())
 
 
 def team_profile(lg, roster, value, core):
@@ -79,9 +90,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    cfg = sleeper.load_config()
-    if not cfg.get("league_id"):
-        sys.exit("No league configured. Run:  ff.py setup <your_sleeper_username>")
+    cfg = sleeper.require_config()
     lg = League(cfg["league_id"])
     me = lg.roster_for_user(cfg["user_id"])
     if not me:
@@ -109,7 +118,12 @@ def main():
     span = f"week {start}" if start == end else f"weeks {start}-{end}"
     print(f"\nPOSITIONAL STRENGTH | {span} | {cfg['league_name']}")
     print("(avg weekly pts of required starters | best surplus bench piece)")
-    print("  required starters: " + ", ".join(f"{p} {n}" for p, n in core.items()) + "\n")
+    print("  required starters: " + ", ".join(f"{p} {n}" for p, n in core.items()))
+    skipped = uncounted_slots(lg.roster_positions)
+    if skipped:
+        print(f"  not counted: {skipped} (FLEX goes to your best leftover RB/WR/TE;"
+              " ros.py --byes covers the whole lineup)")
+    print()
     print(f"  {'TEAM':<24}" + "".join(f"{p:>16}" for p in core))
     for r in lg.rosters:
         pr = profiles[r["roster_id"]]
@@ -129,7 +143,19 @@ def main():
 
     need = gaps[0]
     have = gaps[-1]
+    week = sleeper.current_week()[0]
+    open_, deadline = trade_window(lg.trade_deadline, week)
+    print(f"\n  {deadline}")
+    odds, _ = playoff_odds(lg, sims=2000, seed=0)
+    p = odds[me["roster_id"]]["playoffs"]
+    label, advice = outlook(p)
+    print(f"  Playoff odds {p:.0%} ({label}): {advice}. Details: playoffs.py")
+    if not open_:
+        return
     print(f"\n  TRADE THESIS: you are thinnest at {need}, deepest at {have}.")
+    if label == "LONG SHOT":
+        print(f"  As a long shot, buying at {need} likely won't change your season;")
+        print(f"  the teams below are thin at {have} and may pay for yours instead.")
     print(f"  Partners who are deep at {need} and thin at {have}:\n")
     by_id = {r["roster_id"]: r for r in lg.rosters}
     for score, rid in rank_partners(profiles, me["roster_id"], need, have, med)[:5]:

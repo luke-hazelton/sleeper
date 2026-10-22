@@ -73,11 +73,51 @@ def get(url, cache_key=None, ttl=TTL_LIVE):
 
 # ---------- config ----------
 
-def load_config():
+def _read_config():
     if not os.path.exists(CONFIG):
         return {}
     with open(CONFIG) as f:
         return json.load(f)
+
+
+def pick_league(leagues, key):
+    """The league in `leagues` matching `key`: a 1-based list number, a league
+    id, or part of a league name. Raises ValueError if none or several match."""
+    key = str(key).strip()
+    if key.isdigit() and 1 <= int(key) <= len(leagues):
+        return leagues[int(key) - 1]
+    hits = [lg for lg in leagues if lg["league_id"] == key] or \
+           [lg for lg in leagues if key.lower() in lg["league_name"].lower()]
+    if len(hits) != 1:
+        names = ", ".join(lg["league_name"] for lg in (hits or leagues))
+        raise ValueError(f"'{key}' matches {len(hits) or 'no'} leagues ({names})")
+    return hits[0]
+
+
+def load_config():
+    """The active league's config: username, user_id, league_id, league_name.
+
+    `leagues` lists every league saved at setup; the top-level league is the
+    active one (switch with `ff.py use`). FF_LEAGUE overrides it for a single
+    command, e.g.  FF_LEAGUE=2 python3 scripts/ros.py --pos RB
+    """
+    cfg = _read_config()
+    key = os.environ.get("FF_LEAGUE")
+    if cfg and key:
+        chosen = pick_league(cfg.get("leagues") or [cfg], key)
+        cfg = {**cfg, "league_id": chosen["league_id"], "league_name": chosen["league_name"]}
+    return cfg
+
+
+def require_config():
+    """load_config(), or exit pointing at setup when no league is linked."""
+    try:
+        cfg = load_config()
+    except ValueError as e:
+        raise SystemExit(f"FF_LEAGUE: {e}")
+    if not cfg.get("league_id"):
+        raise SystemExit("No league configured. Run:  ff.py setup <your_sleeper_username>")
+    return cfg
 
 
 def save_config(cfg):
@@ -215,6 +255,17 @@ def matchups(league_id, week):
 
 def transactions(league_id, week):
     return get(f"{BASE}/league/{league_id}/transactions/{week}", f"tx_{league_id}_{week}", TTL_LIVE)
+
+
+def schedule_pairs(league_id, week):
+    """[(roster_id, roster_id)] head-to-head pairings for a week. Sleeper
+    publishes these for every week of the regular season up front, so future
+    weeks work too (their points are just empty)."""
+    games = {}
+    for m in matchups(league_id, week):
+        if m.get("matchup_id") is not None:
+            games.setdefault(m["matchup_id"], []).append(m["roster_id"])
+    return [tuple(g) for _, g in sorted(games.items()) if len(g) == 2]
 
 
 # ---------- projections & stats ----------
