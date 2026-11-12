@@ -26,7 +26,7 @@ CONFIG = os.path.join(ROOT, "config.json")
 # Cache lifetimes in seconds
 TTL_PLAYERS = 86400      # player DB: once a day (14MB, changes slowly)
 TTL_PROJ = 3600 * 6      # projections: refresh a few times a week
-TTL_LIVE = 300           # rosters/matchups: 5 min during game days
+TTL_LIVE = 60            # rosters/matchups/transactions: 1 min, so app changes show up fast
 TTL_TRENDING = 1800      # trending adds/drops: 30 min
 
 
@@ -55,14 +55,21 @@ def _cache_path(key):
     return os.path.join(DATA, "cache", key.replace("/", "_") + ".json")
 
 
-def get(url, cache_key=None, ttl=TTL_LIVE):
-    """GET a URL with optional on-disk caching."""
+def _bust(url):
+    """Append a throwaway query param so Sleeper's CDN can't serve a stale copy.
+    Without it, a lineup change or add/drop made in the app can take minutes
+    to show up in /rosters and /matchups."""
+    return f"{url}{'&' if '?' in url else '?'}_={int(time.time())}"
+
+
+def get(url, cache_key=None, ttl=TTL_LIVE, bust=False):
+    """GET a URL with optional on-disk caching. `bust` skips the CDN cache."""
     if cache_key:
         p = _cache_path(cache_key)
         if os.path.exists(p) and (time.time() - os.path.getmtime(p)) < ttl:
             with open(p) as f:
                 return json.load(f)
-    data = _fetch(url)
+    data = _fetch(_bust(url) if bust else url)
     if cache_key:
         p = _cache_path(cache_key)
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -242,7 +249,7 @@ def league(league_id):
 
 
 def rosters(league_id):
-    return get(f"{BASE}/league/{league_id}/rosters", f"rosters_{league_id}", TTL_LIVE)
+    return get(f"{BASE}/league/{league_id}/rosters", f"rosters_{league_id}", TTL_LIVE, bust=True)
 
 
 def league_users(league_id):
@@ -250,11 +257,11 @@ def league_users(league_id):
 
 
 def matchups(league_id, week):
-    return get(f"{BASE}/league/{league_id}/matchups/{week}", f"matchups_{league_id}_{week}", TTL_LIVE)
+    return get(f"{BASE}/league/{league_id}/matchups/{week}", f"matchups_{league_id}_{week}", TTL_LIVE, bust=True)
 
 
 def transactions(league_id, week):
-    return get(f"{BASE}/league/{league_id}/transactions/{week}", f"tx_{league_id}_{week}", TTL_LIVE)
+    return get(f"{BASE}/league/{league_id}/transactions/{week}", f"tx_{league_id}_{week}", TTL_LIVE, bust=True)
 
 
 def schedule_pairs(league_id, week):
